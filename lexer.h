@@ -28,6 +28,12 @@ typedef struct {
   size_t count;
 } DynamicArray;
 
+typedef struct {
+  char *data;
+  size_t capacity;
+  size_t offset;
+} Arena;
+
 // TODO: decouple lexer config from lexer state
 typedef struct {
   const char **keywords;
@@ -35,7 +41,8 @@ typedef struct {
   const char **puncts;
   size_t punct_count;
   // TODO: add support for single-line comments
-  DynamicArray *tokens;
+  DynamicArray tokens;
+  Arena arena;
   // TODO: add error object instead of using stderr
 } Lexer;
 
@@ -45,33 +52,15 @@ typedef struct {
 #include <stdlib.h>
 #include <string.h>
 
-static DynamicArray *da_init() {
-  DynamicArray *da = malloc(sizeof(DynamicArray));
-  if (da == NULL) {
-    fprintf(stderr, "Failed to allocate dynamic array\n");
-    return NULL;
-  }
-
-  size_t count = 0;
-  size_t capacity = 16;
-  Token *items = malloc(capacity * sizeof(Token));
-
-  if (items == NULL) {
-    fprintf(stderr, "Failed to allocate dynamic array items\n");
-    free(da);
-    return NULL;
-  }
-
-  da->count = count;
-  da->capacity = capacity;
-  da->items = items;
-
-  return da;
+static void da_init(DynamicArray *da) {
+  da->count = 0;
+  da->capacity = 16;
+  da->items = malloc(da->capacity * sizeof(Token));
 }
 
 static int da_add(DynamicArray *da, Token item) {
   if (da->count == da->capacity) {
-    size_t new_capacity = da->capacity * 2;
+    size_t new_capacity = da->capacity + da->capacity / 2;
     Token *new_items = realloc(da->items, new_capacity * sizeof(Token));
     if (new_items == NULL) {
       fprintf(stderr, "Failed to reallocate dynamic array\n");
@@ -87,13 +76,23 @@ static int da_add(DynamicArray *da, Token item) {
   return 0;
 }
 
-static void da_free(DynamicArray *da) {
-  for (size_t i = 0; i < da->count; i++) {
-    free(da->items[i].lexeme);
-  }
-  free(da->items);
-  free(da);
+static void arena_init(Arena *arena, size_t capacity) {
+  arena->data = malloc(capacity);
+  arena->capacity = arena->data ? capacity : 0;
+  arena->offset = 0;
 }
+
+static char *arena_alloc(Arena *arena, size_t size) {
+  if (arena->offset + size > arena->capacity) {
+    return NULL;
+  }
+
+  char *ptr = arena->data + arena->offset;
+  arena->offset += size;
+  return ptr;
+}
+
+static void arena_free(Arena *arena) { free(arena->data); }
 
 // TODO: add token_type_to_string_helper
 
@@ -109,18 +108,17 @@ Lexer *lexer_init() {
   lexer->puncts = NULL;
   lexer->punct_count = 0;
 
-  DynamicArray *tokens = da_init();
-  if (!tokens) {
-    free(lexer);
-    return NULL;
-  }
-  lexer->tokens = tokens;
+  da_init(&lexer->tokens);
+  lexer->arena.data = NULL;
+  lexer->arena.capacity = 0;
+  lexer->arena.offset = 0;
 
   return lexer;
 }
 
 void lexer_free(Lexer *lexer) {
-  da_free(lexer->tokens);
+  free(lexer->tokens.items);
+  arena_free(&lexer->arena);
   free(lexer);
 }
 
@@ -134,31 +132,9 @@ static void lexer_emit(Token *token, TokenType type, char *lexeme,
 static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
                           size_t text_len, size_t start, size_t *consumed) {
   size_t i = start;
-  size_t current_count = 0;
-  size_t current_capacity = 16;
-  char *current = malloc(current_capacity * sizeof(char));
-
-  if (!current) {
-    fprintf(stderr, "Failed to allocate string\n");
-    return -1;
-  }
 
   while (i < text_len && (isalpha((unsigned char)text[i]) || text[i] == '_')) {
-    if (current_count == current_capacity) {
-      current_capacity = current_capacity * 2;
-
-      char *tmp = realloc(current, current_capacity);
-      if (tmp == NULL) {
-        fprintf(stderr, "Failed to reallocate string\n");
-        free(current);
-        return -1;
-      }
-
-      current = tmp;
-    }
-
-    current[current_count++] = text[i++];
-    current[current_count] = '\0';
+    i++;
   }
 
   *consumed = i - start;
@@ -168,32 +144,52 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
   if (lexer->keywords != NULL && lexer->keyword_count > 0) {
     bool is_keyword = false;
     for (size_t kw_idx = 0; kw_idx < lexer->keyword_count; kw_idx++) {
-      if (strcmp(lexer->keywords[kw_idx], current) == 0) {
+      const char *kw = lexer->keywords[kw_idx];
+      size_t kw_len = strlen(kw);
+      if (kw_len == *consumed && memcmp(kw, text + start, *consumed) == 0) {
         is_keyword = true;
         break;
       }
     }
 
     if (is_keyword) {
-      lexer_emit(&token, TOKEN_KEYWORD, current, position);
+      char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
+      if (!lexeme) {
+        return -1;
+      }
 
-      if (da_add(lexer->tokens, token) != 0) {
-        free(current);
+      memcpy(lexeme, text + start, *consumed);
+      lexeme[*consumed] = '\0';
+      lexer_emit(&token, TOKEN_KEYWORD, lexeme, position);
+
+      if (da_add(&lexer->tokens, token) != 0) {
         return -1;
       }
     } else {
-      lexer_emit(&token, TOKEN_SYMBOL, current, position);
+      char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
+      if (!lexeme) {
+        return -1;
+      }
 
-      if (da_add(lexer->tokens, token) != 0) {
-        free(current);
+      memcpy(lexeme, text + start, *consumed);
+      lexeme[*consumed] = '\0';
+      lexer_emit(&token, TOKEN_SYMBOL, lexeme, position);
+
+      if (da_add(&lexer->tokens, token) != 0) {
         return -1;
       }
     }
   } else {
-    lexer_emit(&token, TOKEN_SYMBOL, current, position);
+    char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
+    if (!lexeme) {
+      return -1;
+    }
 
-    if (da_add(lexer->tokens, token) != 0) {
-      free(current);
+    memcpy(lexeme, text + start, *consumed);
+    lexeme[*consumed] = '\0';
+    lexer_emit(&token, TOKEN_SYMBOL, lexeme, position);
+
+    if (da_add(&lexer->tokens, token) != 0) {
       return -1;
     }
   }
@@ -204,41 +200,25 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
 static int lex_number(Lexer *lexer, Vector2 position, const char *text,
                       size_t text_len, size_t start, size_t *consumed) {
   size_t i = start;
-  size_t current_count = 0;
-  size_t current_capacity = 16;
-  char *current = malloc(current_capacity * sizeof(char));
-
-  if (!current) {
-    fprintf(stderr, "Failed to allocate string\n");
-    return -1;
-  }
 
   while (i < text_len && isdigit((unsigned char)text[i])) {
-    if (current_count == current_capacity) {
-      current_capacity = current_capacity * 2;
-
-      char *tmp = realloc(current, current_capacity);
-      if (tmp == NULL) {
-        fprintf(stderr, "Failed to reallocate string\n");
-        free(current);
-        return -1;
-      }
-
-      current = tmp;
-    }
-
-    current[current_count++] = text[i++];
-    current[current_count] = '\0';
+    i++;
   }
 
   *consumed = i - start;
 
   Token token;
 
-  lexer_emit(&token, TOKEN_NUMBER, current, position);
+  char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
+  if (!lexeme) {
+    return -1;
+  }
 
-  if (da_add(lexer->tokens, token) != 0) {
-    free(current);
+  memcpy(lexeme, text + start, *consumed);
+  lexeme[*consumed] = '\0';
+  lexer_emit(&token, TOKEN_NUMBER, lexeme, position);
+
+  if (da_add(&lexer->tokens, token) != 0) {
     return -1;
   }
 
@@ -246,38 +226,16 @@ static int lex_number(Lexer *lexer, Vector2 position, const char *text,
 }
 
 static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
-                      size_t text_len, size_t start, size_t *consumed) {
+                     size_t text_len, size_t start, size_t *consumed) {
   /*
    * TODO: longest-match punctuation
    * Currently, this works for preserving tokens such as '==' or '->'
    * But passing something such as '()' will break it
    */
   size_t i = start;
-  size_t current_count = 0;
-  size_t current_capacity = 16;
-  char *current = malloc(current_capacity * sizeof(char));
-
-  if (current == NULL) {
-    fprintf(stderr, "Failed to allocate string\n");
-    return -1;
-  }
 
   while (i < text_len && ispunct((unsigned char)text[i])) {
-    if (current_count == current_capacity) {
-      current_capacity = current_capacity * 2;
-
-      char *tmp = realloc(current, current_capacity);
-      if (tmp == NULL) {
-        fprintf(stderr, "Failed to reallocate string\n");
-        free(current);
-        return -1;
-      }
-
-      current = tmp;
-    }
-
-    current[current_count++] = text[i++];
-    current[current_count] = '\0';
+    i++;
   }
 
   *consumed = i - start;
@@ -287,22 +245,30 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
   bool is_char = false;
 
   for (size_t punct_idx = 0; punct_idx < lexer->punct_count; punct_idx++) {
-    if (strcmp(lexer->puncts[punct_idx], current) == 0) {
+    const char *punct = lexer->puncts[punct_idx];
+    size_t punct_len = strlen(punct);
+    if (punct_len == *consumed && memcmp(punct, text + start, *consumed) == 0) {
       is_char = true;
       break;
     }
   }
 
   if (is_char) {
-    lexer_emit(&token, TOKEN_PUNCT, current, position);
+    char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
+    if (!lexeme) {
+      return -1;
+    }
 
-    if (da_add(lexer->tokens, token) != 0) {
-      free(current);
+    memcpy(lexeme, text + start, *consumed);
+    lexeme[*consumed] = '\0';
+    lexer_emit(&token, TOKEN_PUNCT, lexeme, position);
+
+    if (da_add(&lexer->tokens, token) != 0) {
       return -1;
     }
   } else {
-    fprintf(stderr, "Illegal character sequence: %s\n", current);
-    free(current);
+    fprintf(stderr, "Illegal character sequence: %.*s\n", (int)*consumed,
+            text + start);
     return -1;
   }
 
@@ -314,6 +280,12 @@ int lex(Lexer *lexer, const char *text) {
   int y_pos = 1;
 
   size_t text_len = strlen(text);
+
+  arena_free(&lexer->arena);
+  arena_init(&lexer->arena, text_len * 2 + 1);
+  if (!lexer->arena.data) {
+    return -1;
+  }
 
   for (size_t i = 0; i < text_len; i++) {
     if (i < text_len && text[i] == '\n') {
@@ -365,8 +337,16 @@ int lex(Lexer *lexer, const char *text) {
 
   lexer_emit(&eof, TOKEN_EOF, NULL, pos);
 
-  if (da_add(lexer->tokens, eof) != 0) {
+  if (da_add(&lexer->tokens, eof) != 0)
     return -1;
+
+  if (lexer->tokens.count < lexer->tokens.capacity) {
+    Token *shrunk =
+        realloc(lexer->tokens.items, lexer->tokens.count * sizeof(Token));
+    if (shrunk) {
+      lexer->tokens.items = shrunk;
+      lexer->tokens.capacity = lexer->tokens.count;
+    }
   }
 
   return 0;
