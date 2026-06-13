@@ -23,7 +23,7 @@ typedef struct {
 } Token;
 
 typedef struct {
-  Token **items; // consider *items here, limiting to one allocation per token
+  Token *items;
   size_t capacity;
   size_t count;
 } DynamicArray;
@@ -54,7 +54,7 @@ static DynamicArray *da_init() {
 
   size_t count = 0;
   size_t capacity = 16;
-  Token **items = malloc(capacity * sizeof(Token *));
+  Token *items = malloc(capacity * sizeof(Token));
 
   if (items == NULL) {
     fprintf(stderr, "Failed to allocate dynamic array items\n");
@@ -69,13 +69,12 @@ static DynamicArray *da_init() {
   return da;
 }
 
-static int da_add(DynamicArray *da, Token *item) {
+static int da_add(DynamicArray *da, Token item) {
   if (da->count == da->capacity) {
     size_t new_capacity = da->capacity * 2;
-    Token **new_items = realloc(da->items, new_capacity * sizeof(Token *));
+    Token *new_items = realloc(da->items, new_capacity * sizeof(Token));
     if (new_items == NULL) {
       fprintf(stderr, "Failed to reallocate dynamic array\n");
-      free(item);
       return -1;
     }
 
@@ -90,8 +89,7 @@ static int da_add(DynamicArray *da, Token *item) {
 
 static void da_free(DynamicArray *da) {
   for (size_t i = 0; i < da->count; i++) {
-    free(da->items[i]->lexeme);
-    free(da->items[i]);
+    free(da->items[i].lexeme);
   }
   free(da->items);
   free(da);
@@ -165,12 +163,7 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
 
   *consumed = i - start;
 
-  Token *token = malloc(sizeof(Token));
-  if (token == NULL) {
-    fprintf(stderr, "Failed to allocate token\n");
-    free(current);
-    return -1;
-  }
+  Token token;
 
   if (lexer->keywords != NULL && lexer->keyword_count > 0) {
     bool is_keyword = false;
@@ -182,14 +175,14 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
     }
 
     if (is_keyword) {
-      lexer_emit(token, TOKEN_KEYWORD, current, position);
+      lexer_emit(&token, TOKEN_KEYWORD, current, position);
 
       if (da_add(lexer->tokens, token) != 0) {
         free(current);
         return -1;
       }
     } else {
-      lexer_emit(token, TOKEN_SYMBOL, current, position);
+      lexer_emit(&token, TOKEN_SYMBOL, current, position);
 
       if (da_add(lexer->tokens, token) != 0) {
         free(current);
@@ -197,7 +190,7 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
       }
     }
   } else {
-    lexer_emit(token, TOKEN_SYMBOL, current, position);
+    lexer_emit(&token, TOKEN_SYMBOL, current, position);
 
     if (da_add(lexer->tokens, token) != 0) {
       free(current);
@@ -240,14 +233,9 @@ static int lex_number(Lexer *lexer, Vector2 position, const char *text,
 
   *consumed = i - start;
 
-  Token *token = malloc(sizeof(Token));
-  if (token == NULL) {
-    fprintf(stderr, "Failed to allocate token\n");
-    free(current);
-    return -1;
-  }
+  Token token;
 
-  lexer_emit(token, TOKEN_NUMBER, current, position);
+  lexer_emit(&token, TOKEN_NUMBER, current, position);
 
   if (da_add(lexer->tokens, token) != 0) {
     free(current);
@@ -294,12 +282,7 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
 
   *consumed = i - start;
 
-  Token *token = malloc(sizeof(Token));
-  if (token == NULL) {
-    fprintf(stderr, "Failed to allocate token\n");
-    free(current);
-    return -1;
-  }
+  Token token;
 
   bool is_char = false;
 
@@ -311,17 +294,15 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
   }
 
   if (is_char) {
-    lexer_emit(token, TOKEN_PUNCT, current, position);
+    lexer_emit(&token, TOKEN_PUNCT, current, position);
 
     if (da_add(lexer->tokens, token) != 0) {
       free(current);
-      free(token);
       return -1;
     }
   } else {
     fprintf(stderr, "Illegal character sequence: %s\n", current);
     free(current);
-    free(token);
     return -1;
   }
 
@@ -378,17 +359,13 @@ int lex(Lexer *lexer, const char *text) {
     }
   }
 
-  Token *eof = malloc(sizeof(Token));
-
-  if (!eof)
-    return -1;
-
   Vector2 pos = {x_pos, y_pos};
 
-  lexer_emit(eof, TOKEN_EOF, NULL, pos);
+  Token eof;
+
+  lexer_emit(&eof, TOKEN_EOF, NULL, pos);
 
   if (da_add(lexer->tokens, eof) != 0) {
-    free(eof);
     return -1;
   }
 
