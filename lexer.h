@@ -28,6 +28,17 @@ typedef struct {
   size_t count;
 } DynamicArray;
 
+typedef enum {
+  LEXER_OK,
+  LEXER_ERROR_ALLOC,
+  LEXER_ERROR_ILLEGAL_CHAR
+} LexerErrorCode;
+
+typedef struct {
+  LexerErrorCode code;
+  Vector2 position;
+} LexerError;
+
 // TODO: decouple lexer config from lexer state
 typedef struct {
   const char **keywords;
@@ -36,7 +47,7 @@ typedef struct {
   size_t punct_count;
   // TODO: add support for single-line comments
   DynamicArray tokens;
-  // TODO: add error object instead of using stderr
+  LexerError *error;
 } Lexer;
 
 #ifdef LEXER_IMPLEMENTATION
@@ -44,6 +55,15 @@ typedef struct {
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void emit_error(Lexer *lexer, LexerErrorCode code, Vector2 position) {
+  LexerError *err = malloc(sizeof(LexerError));
+  if (err) {
+    err->code = code;
+    err->position = position;
+  }
+  lexer->error = err;
+}
 
 static void da_init(DynamicArray *da) {
   da->count = 0;
@@ -56,7 +76,6 @@ static int da_add(DynamicArray *da, Token item) {
     size_t new_capacity = da->capacity + da->capacity / 2;
     Token *new_items = realloc(da->items, new_capacity * sizeof(Token));
     if (new_items == NULL) {
-      fprintf(stderr, "Failed to reallocate dynamic array\n");
       return -1;
     }
 
@@ -98,12 +117,14 @@ Lexer *lexer_init() {
   lexer->punct_count = 0;
 
   da_init(&lexer->tokens);
+  lexer->error = NULL;
 
   return lexer;
 }
 
 void lexer_free(Lexer *lexer) {
   free(lexer->tokens.items);
+  free(lexer->error);
   free(lexer);
 }
 
@@ -141,7 +162,11 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
 
   lexer_emit(&token, type, text + start, *consumed, position);
 
-  return da_add(&lexer->tokens, token);
+  if (da_add(&lexer->tokens, token) != 0) {
+    emit_error(lexer, LEXER_ERROR_ALLOC, position);
+    return -1;
+  }
+  return 0;
 }
 
 static int lex_number(Lexer *lexer, Vector2 position, const char *text,
@@ -157,7 +182,11 @@ static int lex_number(Lexer *lexer, Vector2 position, const char *text,
   Token token;
   lexer_emit(&token, TOKEN_NUMBER, text + start, *consumed, position);
 
-  return da_add(&lexer->tokens, token);
+  if (da_add(&lexer->tokens, token) != 0) {
+    emit_error(lexer, LEXER_ERROR_ALLOC, position);
+    return -1;
+  }
+  return 0;
 }
 
 static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
@@ -177,10 +206,14 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
     *consumed = best_len;
     Token token;
     lexer_emit(&token, TOKEN_PUNCT, text + start, best_len, position);
-    return da_add(&lexer->tokens, token);
+    if (da_add(&lexer->tokens, token) != 0) {
+      emit_error(lexer, LEXER_ERROR_ALLOC, position);
+      return -1;
+    }
+    return 0;
   }
 
-  fprintf(stderr, "Illegal character: %c\n", text[start]);
+  emit_error(lexer, LEXER_ERROR_ILLEGAL_CHAR, position);
   return -1;
 }
 
@@ -227,7 +260,7 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
       x_pos += consumed;
       i += consumed - 1;
     } else {
-      fprintf(stderr, "Illegal character: %c\n", text[i]);
+      emit_error(lexer, LEXER_ERROR_ILLEGAL_CHAR, position);
       return -1;
     }
   }
@@ -238,8 +271,10 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
 
   lexer_emit(&eof, TOKEN_EOF, NULL, 0, pos);
 
-  if (da_add(&lexer->tokens, eof) != 0)
+  if (da_add(&lexer->tokens, eof) != 0) {
+    emit_error(lexer, LEXER_ERROR_ALLOC, pos);
     return -1;
+  }
 
   if (lexer->tokens.count < lexer->tokens.capacity) {
     Token *shrunk =
