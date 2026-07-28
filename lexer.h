@@ -162,32 +162,25 @@ static int lex_number(Lexer *lexer, Vector2 position, const char *text,
 
 static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
                      size_t text_len, size_t start, size_t *consumed) {
-  /*
-   * TODO: longest-match punctuation
-   * Currently, this works for preserving tokens such as '==' or '->'
-   * But passing something such as '()' will break it
-   */
-  size_t i = start;
-
-  while (i < text_len && ispunct((unsigned char)text[i])) {
-    i++;
-  }
-
-  *consumed = i - start;
-
-  Token token;
+  size_t best_len = 0;
 
   for (size_t punct_idx = 0; punct_idx < lexer->punct_count; punct_idx++) {
     const char *punct = lexer->puncts[punct_idx];
     size_t punct_len = strlen(punct);
-    if (punct_len == *consumed && memcmp(punct, text + start, *consumed) == 0) {
-      lexer_emit(&token, TOKEN_PUNCT, text + start, *consumed, position);
-      return da_add(&lexer->tokens, token);
+    if (start + punct_len <= text_len && punct_len > best_len &&
+        memcmp(punct, text + start, punct_len) == 0) {
+      best_len = punct_len;
     }
   }
 
-  fprintf(stderr, "Illegal character sequence: %.*s\n", (int)*consumed,
-          text + start);
+  if (best_len > 0) {
+    *consumed = best_len;
+    Token token;
+    lexer_emit(&token, TOKEN_PUNCT, text + start, best_len, position);
+    return da_add(&lexer->tokens, token);
+  }
+
+  fprintf(stderr, "Illegal character: %c\n", text[start]);
   return -1;
 }
 
