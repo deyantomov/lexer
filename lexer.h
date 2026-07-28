@@ -302,20 +302,20 @@ int lex(Lexer *lexer, const char *text) {
   }
 
   for (size_t i = 0; i < text_len; i++) {
-    if (i < text_len && text[i] == '\n') {
+    if (text[i] == '\n') {
       y_pos++;
       x_pos = 1;
       continue;
     }
 
-    if (i < text_len && isspace((unsigned char)text[i])) {
+    if (isspace((unsigned char)text[i])) {
       x_pos++;
       continue;
     }
 
     Vector2 position = {x_pos, y_pos};
 
-    if (i < text_len && (isalpha((unsigned char)text[i]) || text[i] == '_')) {
+    if (isalpha((unsigned char)text[i]) || text[i] == '_') {
       size_t consumed = 0;
       if (lex_identifier(lexer, position, text, text_len, i, &consumed) != 0) {
         return -1;
@@ -323,7 +323,7 @@ int lex(Lexer *lexer, const char *text) {
 
       x_pos += consumed;
       i += consumed - 1;
-    } else if (i < text_len && isdigit((unsigned char)text[i])) {
+    } else if (isdigit((unsigned char)text[i])) {
       size_t consumed = 0;
       if (lex_number(lexer, position, text, text_len, i, &consumed) != 0) {
         return -1;
@@ -331,7 +331,7 @@ int lex(Lexer *lexer, const char *text) {
 
       x_pos += consumed;
       i += consumed - 1;
-    } else if (i < text_len && ispunct((unsigned char)text[i])) {
+    } else if (ispunct((unsigned char)text[i])) {
       size_t consumed = 0;
       if (lex_punct(lexer, position, text, text_len, i, &consumed) != 0) {
         return -1;
