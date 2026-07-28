@@ -45,7 +45,8 @@ typedef struct {
   size_t keyword_count;
   const char **puncts;
   size_t punct_count;
-  // TODO: add support for single-line comments
+  const char *comment;
+  size_t comment_len;
   DynamicArray tokens;
   LexerError *error;
 } Lexer;
@@ -115,6 +116,8 @@ Lexer *lexer_init() {
   lexer->keyword_count = 0;
   lexer->puncts = NULL;
   lexer->punct_count = 0;
+  lexer->comment = NULL;
+  lexer->comment_len = 0;
 
   da_init(&lexer->tokens);
   lexer->error = NULL;
@@ -233,6 +236,17 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
       continue;
     }
 
+    if (lexer->comment != NULL && i + lexer->comment_len <= text_len &&
+        memcmp(text + i, lexer->comment, lexer->comment_len) == 0) {
+      while (i < text_len && text[i] != '\n') {
+        i++;
+        x_pos++;
+      }
+
+      i--;
+      continue;
+    }
+
     Vector2 position = {x_pos, y_pos};
 
     if (isalpha((unsigned char)text[i]) || text[i] == '_') {
@@ -277,8 +291,7 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
   }
 
   if (lexer->tokens.count < lexer->tokens.capacity) {
-    Token *shrunk =
-        realloc(lexer->tokens.items, lexer->tokens.count * sizeof(Token));
+    Token *shrunk = realloc(lexer->tokens.items, lexer->tokens.count * sizeof(Token));
     if (shrunk) {
       lexer->tokens.items = shrunk;
       lexer->tokens.capacity = lexer->tokens.count;
