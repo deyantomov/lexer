@@ -191,11 +191,9 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
   return -1;
 }
 
-int lex(Lexer *lexer, const char *text) {
+int lex(Lexer *lexer, const char *text, size_t text_len) {
   int x_pos = 1;
   int y_pos = 1;
-
-  size_t text_len = strlen(text);
 
   for (size_t i = 0; i < text_len; i++) {
     if (text[i] == '\n') {
