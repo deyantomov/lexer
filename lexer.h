@@ -94,7 +94,21 @@ static char *arena_alloc(Arena *arena, size_t size) {
 
 static void arena_free(Arena *arena) { free(arena->data); }
 
-// TODO: add token_type_to_string_helper
+static const char *token_type_to_string(TokenType type) {
+  switch (type) {
+  case TOKEN_SYMBOL:
+    return "TOKEN_SYMBOL";
+  case TOKEN_NUMBER:
+    return "TOKEN_NUMBER";
+  case TOKEN_KEYWORD:
+    return "TOKEN_KEYWORD";
+  case TOKEN_PUNCT:
+    return "TOKEN_PUNCT";
+  case TOKEN_EOF:
+    return "TOKEN_EOF";
+  }
+  return "UNKNOWN";
+}
 
 Lexer *lexer_init() {
   Lexer *lexer = malloc(sizeof(Lexer));
