@@ -17,8 +17,8 @@ typedef enum {
 
 typedef struct {
   TokenType type;
-  // NOTE: lexeme may be replaced with spans (start, length)
-  char *lexeme; // NULL for EOF token
+  const char *start; // pointer into source text, NULL for EOF
+  size_t length;
   Vector2 position;
 } Token;
 
@@ -28,12 +28,6 @@ typedef struct {
   size_t count;
 } DynamicArray;
 
-typedef struct {
-  char *data;
-  size_t capacity;
-  size_t offset;
-} Arena;
-
 // TODO: decouple lexer config from lexer state
 typedef struct {
   const char **keywords;
@@ -42,7 +36,6 @@ typedef struct {
   size_t punct_count;
   // TODO: add support for single-line comments
   DynamicArray tokens;
-  Arena arena;
   // TODO: add error object instead of using stderr
 } Lexer;
 
@@ -76,24 +69,6 @@ static int da_add(DynamicArray *da, Token item) {
   return 0;
 }
 
-static void arena_init(Arena *arena, size_t capacity) {
-  arena->data = malloc(capacity);
-  arena->capacity = arena->data ? capacity : 0;
-  arena->offset = 0;
-}
-
-static char *arena_alloc(Arena *arena, size_t size) {
-  if (arena->offset + size > arena->capacity) {
-    return NULL;
-  }
-
-  char *ptr = arena->data + arena->offset;
-  arena->offset += size;
-  return ptr;
-}
-
-static void arena_free(Arena *arena) { free(arena->data); }
-
 static const char *token_type_to_string(TokenType type) {
   switch (type) {
   case TOKEN_SYMBOL:
@@ -123,23 +98,20 @@ Lexer *lexer_init() {
   lexer->punct_count = 0;
 
   da_init(&lexer->tokens);
-  lexer->arena.data = NULL;
-  lexer->arena.capacity = 0;
-  lexer->arena.offset = 0;
 
   return lexer;
 }
 
 void lexer_free(Lexer *lexer) {
   free(lexer->tokens.items);
-  arena_free(&lexer->arena);
   free(lexer);
 }
 
-static void lexer_emit(Token *token, TokenType type, char *lexeme,
-                       Vector2 position) {
+static void lexer_emit(Token *token, TokenType type, const char *start,
+                       size_t length, Vector2 position) {
   token->type = type;
-  token->lexeme = lexeme;
+  token->start = start;
+  token->length = length;
   token->position = position;
 }
 
@@ -155,60 +127,21 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
 
   Token token;
 
+  TokenType type = TOKEN_SYMBOL;
   if (lexer->keywords != NULL && lexer->keyword_count > 0) {
-    bool is_keyword = false;
     for (size_t kw_idx = 0; kw_idx < lexer->keyword_count; kw_idx++) {
       const char *kw = lexer->keywords[kw_idx];
       size_t kw_len = strlen(kw);
       if (kw_len == *consumed && memcmp(kw, text + start, *consumed) == 0) {
-        is_keyword = true;
+        type = TOKEN_KEYWORD;
         break;
       }
     }
-
-    if (is_keyword) {
-      char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
-      if (!lexeme) {
-        return -1;
-      }
-
-      memcpy(lexeme, text + start, *consumed);
-      lexeme[*consumed] = '\0';
-      lexer_emit(&token, TOKEN_KEYWORD, lexeme, position);
-
-      if (da_add(&lexer->tokens, token) != 0) {
-        return -1;
-      }
-    } else {
-      char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
-      if (!lexeme) {
-        return -1;
-      }
-
-      memcpy(lexeme, text + start, *consumed);
-      lexeme[*consumed] = '\0';
-      lexer_emit(&token, TOKEN_SYMBOL, lexeme, position);
-
-      if (da_add(&lexer->tokens, token) != 0) {
-        return -1;
-      }
-    }
-  } else {
-    char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
-    if (!lexeme) {
-      return -1;
-    }
-
-    memcpy(lexeme, text + start, *consumed);
-    lexeme[*consumed] = '\0';
-    lexer_emit(&token, TOKEN_SYMBOL, lexeme, position);
-
-    if (da_add(&lexer->tokens, token) != 0) {
-      return -1;
-    }
   }
 
-  return 0;
+  lexer_emit(&token, type, text + start, *consumed, position);
+
+  return da_add(&lexer->tokens, token);
 }
 
 static int lex_number(Lexer *lexer, Vector2 position, const char *text,
@@ -222,21 +155,9 @@ static int lex_number(Lexer *lexer, Vector2 position, const char *text,
   *consumed = i - start;
 
   Token token;
+  lexer_emit(&token, TOKEN_NUMBER, text + start, *consumed, position);
 
-  char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
-  if (!lexeme) {
-    return -1;
-  }
-
-  memcpy(lexeme, text + start, *consumed);
-  lexeme[*consumed] = '\0';
-  lexer_emit(&token, TOKEN_NUMBER, lexeme, position);
-
-  if (da_add(&lexer->tokens, token) != 0) {
-    return -1;
-  }
-
-  return 0;
+  return da_add(&lexer->tokens, token);
 }
 
 static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
@@ -256,37 +177,18 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
 
   Token token;
 
-  bool is_char = false;
-
   for (size_t punct_idx = 0; punct_idx < lexer->punct_count; punct_idx++) {
     const char *punct = lexer->puncts[punct_idx];
     size_t punct_len = strlen(punct);
     if (punct_len == *consumed && memcmp(punct, text + start, *consumed) == 0) {
-      is_char = true;
-      break;
+      lexer_emit(&token, TOKEN_PUNCT, text + start, *consumed, position);
+      return da_add(&lexer->tokens, token);
     }
   }
 
-  if (is_char) {
-    char *lexeme = arena_alloc(&lexer->arena, *consumed + 1);
-    if (!lexeme) {
-      return -1;
-    }
-
-    memcpy(lexeme, text + start, *consumed);
-    lexeme[*consumed] = '\0';
-    lexer_emit(&token, TOKEN_PUNCT, lexeme, position);
-
-    if (da_add(&lexer->tokens, token) != 0) {
-      return -1;
-    }
-  } else {
-    fprintf(stderr, "Illegal character sequence: %.*s\n", (int)*consumed,
-            text + start);
-    return -1;
-  }
-
-  return 0;
+  fprintf(stderr, "Illegal character sequence: %.*s\n", (int)*consumed,
+          text + start);
+  return -1;
 }
 
 int lex(Lexer *lexer, const char *text) {
@@ -294,12 +196,6 @@ int lex(Lexer *lexer, const char *text) {
   int y_pos = 1;
 
   size_t text_len = strlen(text);
-
-  arena_free(&lexer->arena);
-  arena_init(&lexer->arena, text_len * 2 + 1);
-  if (!lexer->arena.data) {
-    return -1;
-  }
 
   for (size_t i = 0; i < text_len; i++) {
     if (text[i] == '\n') {
@@ -349,7 +245,7 @@ int lex(Lexer *lexer, const char *text) {
 
   Token eof;
 
-  lexer_emit(&eof, TOKEN_EOF, NULL, pos);
+  lexer_emit(&eof, TOKEN_EOF, NULL, 0, pos);
 
   if (da_add(&lexer->tokens, eof) != 0)
     return -1;
