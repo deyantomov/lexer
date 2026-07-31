@@ -142,7 +142,7 @@ static int lex_identifier(Lexer *lexer, Position position, const char *text,
                           size_t text_len, size_t start, size_t *consumed) {
   size_t i = start;
 
-  while (i < text_len && (isalpha((unsigned char)text[i]) || text[i] == '_')) {
+  while (i < text_len && (isalnum((unsigned char)text[i]) || text[i] == '_')) {
     i++;
   }
 
