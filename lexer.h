@@ -3,9 +3,9 @@
 #include <stdio.h>
 
 typedef struct {
-  int x;
-  int y;
-} Vector2;
+  int line;
+  int col;
+} Position;
 
 typedef enum {
   TOKEN_SYMBOL,
@@ -19,7 +19,7 @@ typedef struct {
   TokenType type;
   const char *start; // pointer into source text, NULL for EOF
   size_t length;
-  Vector2 position;
+  Position position;
 } Token;
 
 typedef struct {
@@ -36,10 +36,9 @@ typedef enum {
 
 typedef struct {
   LexerErrorCode code;
-  Vector2 position;
+  Position position;
 } LexerError;
 
-// TODO: decouple lexer config from lexer state
 typedef struct {
   const char **keywords;
   size_t keyword_count;
@@ -47,6 +46,10 @@ typedef struct {
   size_t punct_count;
   const char *comment;
   size_t comment_len;
+} LexerConfig;
+
+typedef struct {
+  LexerConfig config;
   DynamicArray tokens;
   LexerError *error;
 } Lexer;
@@ -57,7 +60,9 @@ typedef struct {
 #include <stdlib.h>
 #include <string.h>
 
-static void emit_error(Lexer *lexer, LexerErrorCode code, Vector2 position) {
+#define DEFAULT_DA_CAPACITY 16
+
+static void emit_error(Lexer *lexer, LexerErrorCode code, Position position) {
   LexerError *err = malloc(sizeof(LexerError));
   if (err) {
     err->code = code;
@@ -68,13 +73,13 @@ static void emit_error(Lexer *lexer, LexerErrorCode code, Vector2 position) {
 
 static void da_init(DynamicArray *da) {
   da->count = 0;
-  da->capacity = 16;
+  da->capacity = DEFAULT_DA_CAPACITY;
   da->items = malloc(da->capacity * sizeof(Token));
 }
 
 static int da_add(DynamicArray *da, Token item) {
   if (da->count == da->capacity) {
-    size_t new_capacity = da->capacity + da->capacity / 2;
+    size_t new_capacity = da->capacity * 2;
     Token *new_items = realloc(da->items, new_capacity * sizeof(Token));
     if (new_items == NULL) {
       return -1;
@@ -105,20 +110,14 @@ static const char *token_type_to_string(TokenType type) {
   return "UNKNOWN";
 }
 
-Lexer *lexer_init() {
+Lexer *lexer_init(LexerConfig config) {
   Lexer *lexer = malloc(sizeof(Lexer));
   if (lexer == NULL) {
     fprintf(stderr, "Failed to allocate lexer\n");
     return NULL;
   }
 
-  lexer->keywords = NULL;
-  lexer->keyword_count = 0;
-  lexer->puncts = NULL;
-  lexer->punct_count = 0;
-  lexer->comment = NULL;
-  lexer->comment_len = 0;
-
+  lexer->config = config;
   da_init(&lexer->tokens);
   lexer->error = NULL;
 
@@ -132,14 +131,14 @@ void lexer_free(Lexer *lexer) {
 }
 
 static void lexer_emit(Token *token, TokenType type, const char *start,
-                       size_t length, Vector2 position) {
+                       size_t length, Position position) {
   token->type = type;
   token->start = start;
   token->length = length;
   token->position = position;
 }
 
-static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
+static int lex_identifier(Lexer *lexer, Position position, const char *text,
                           size_t text_len, size_t start, size_t *consumed) {
   size_t i = start;
 
@@ -152,11 +151,12 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
   Token token;
 
   TokenType type = TOKEN_SYMBOL;
-  if (lexer->keywords != NULL && lexer->keyword_count > 0) {
-    for (size_t kw_idx = 0; kw_idx < lexer->keyword_count; kw_idx++) {
-      const char *kw = lexer->keywords[kw_idx];
-      size_t kw_len = strlen(kw);
-      if (kw_len == *consumed && memcmp(kw, text + start, *consumed) == 0) {
+  if (lexer->config.keywords != NULL && lexer->config.keyword_count > 0) {
+    for (size_t keyword_idx = 0; keyword_idx < lexer->config.keyword_count; keyword_idx++) {
+      const char *current = lexer->config.keywords[keyword_idx];
+      size_t keyword_len = strlen(current);
+      bool isCurrent = memcmp(current, text + start, *consumed) == 0;
+      if (keyword_len == *consumed && isCurrent) {
         type = TOKEN_KEYWORD;
         break;
       }
@@ -172,7 +172,7 @@ static int lex_identifier(Lexer *lexer, Vector2 position, const char *text,
   return 0;
 }
 
-static int lex_number(Lexer *lexer, Vector2 position, const char *text,
+static int lex_number(Lexer *lexer, Position position, const char *text,
                       size_t text_len, size_t start, size_t *consumed) {
   size_t i = start;
 
@@ -192,15 +192,16 @@ static int lex_number(Lexer *lexer, Vector2 position, const char *text,
   return 0;
 }
 
-static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
+static int lex_punct(Lexer *lexer, Position position, const char *text,
                      size_t text_len, size_t start, size_t *consumed) {
   size_t best_len = 0;
 
-  for (size_t punct_idx = 0; punct_idx < lexer->punct_count; punct_idx++) {
-    const char *punct = lexer->puncts[punct_idx];
-    size_t punct_len = strlen(punct);
-    if (start + punct_len <= text_len && punct_len > best_len &&
-        memcmp(punct, text + start, punct_len) == 0) {
+  for (size_t punct_idx = 0; punct_idx < lexer->config.punct_count; punct_idx++) {
+    const char *current = lexer->config.puncts[punct_idx];
+    size_t punct_len = strlen(current);
+    bool isCurrent = memcmp(current, text + start, punct_len) == 0;
+
+    if (start + punct_len <= text_len && punct_len > best_len && isCurrent) {
       best_len = punct_len;
     }
   }
@@ -221,33 +222,34 @@ static int lex_punct(Lexer *lexer, Vector2 position, const char *text,
 }
 
 int lex(Lexer *lexer, const char *text, size_t text_len) {
-  int x_pos = 1;
-  int y_pos = 1;
+  int col = 1;
+  int line = 1;
 
   for (size_t i = 0; i < text_len; i++) {
     if (text[i] == '\n') {
-      y_pos++;
-      x_pos = 1;
+      line++;
+      col = 1;
       continue;
     }
 
     if (isspace((unsigned char)text[i])) {
-      x_pos++;
+      col++;
       continue;
     }
 
-    if (lexer->comment != NULL && i + lexer->comment_len <= text_len &&
-        memcmp(text + i, lexer->comment, lexer->comment_len) == 0) {
+
+    bool isCurrent = memcmp(text + i, lexer->config.comment, lexer->config.comment_len) == 0;
+    if (lexer->config.comment != NULL && i + lexer->config.comment_len <= text_len && isCurrent) {
       while (i < text_len && text[i] != '\n') {
         i++;
-        x_pos++;
+        col++;
       }
 
       i--;
       continue;
     }
 
-    Vector2 position = {x_pos, y_pos};
+    Position position = {line, col};
 
     if (isalpha((unsigned char)text[i]) || text[i] == '_') {
       size_t consumed = 0;
@@ -255,7 +257,7 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
         return -1;
       }
 
-      x_pos += consumed;
+      col += consumed;
       i += consumed - 1;
     } else if (isdigit((unsigned char)text[i])) {
       size_t consumed = 0;
@@ -263,7 +265,7 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
         return -1;
       }
 
-      x_pos += consumed;
+      col += consumed;
       i += consumed - 1;
     } else if (ispunct((unsigned char)text[i])) {
       size_t consumed = 0;
@@ -271,7 +273,7 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
         return -1;
       }
 
-      x_pos += consumed;
+      col += consumed;
       i += consumed - 1;
     } else {
       emit_error(lexer, LEXER_ERROR_ILLEGAL_CHAR, position);
@@ -279,7 +281,7 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
     }
   }
 
-  Vector2 pos = {x_pos, y_pos};
+  Position pos = {line, col};
 
   Token eof;
 
