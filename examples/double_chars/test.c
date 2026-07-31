@@ -2,17 +2,17 @@
 #include "../../lexer.h"
 #include "../file.h"
 
-const char *puncts[5] = {"(", ")", "=", "-", ">"};
+const char *puncts[6] = {"(", ")", "=", "-", ">", "->"};
 
 int main(void) {
-  char *file_name = "double_paren.txt";
+  char *file_name = "double_chars.txt";
   char *text = open_file(file_name);
   if (text == NULL) {
     fprintf(stderr, "Failed to open file %s\n", file_name);
     exit(1);
   }
 
-  LexerConfig config = {NULL, 0, puncts, 5, NULL, 0};
+  LexerConfig config = {NULL, 0, puncts, 6, NULL, 0};
   Lexer *lexer = lexer_init(config);
   if (lexer == NULL) {
     fprintf(stderr, "Failed to initialize lexer\n");
