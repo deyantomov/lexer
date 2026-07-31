@@ -99,7 +99,7 @@ original text. The token types are:
 - `TOKEN_EOF` — end of input
 
 Punctuation uses longest-match: if both `-` and `->` are configured, `->`
-wins. Comment markers also work with multiple characters.
+wins. Single-line comment markers also work with multiple characters, but you have to specify their exact length.
 
 ## Examples
 
