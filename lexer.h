@@ -94,7 +94,7 @@ static int da_add(DynamicArray *da, Token item) {
   return 0;
 }
 
-static const char *token_type_to_string(TokenType type) {
+const char *token_type_to_string(TokenType type) {
   switch (type) {
   case TOKEN_SYMBOL:
     return "TOKEN_SYMBOL";
