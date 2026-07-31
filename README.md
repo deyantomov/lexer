@@ -109,6 +109,31 @@ Ready-to-run examples live in [`examples/`](examples/):
 - `double_chars/` — showing off multi-character punctuation like `->`.
 - `lorem/` — tokenizing plain text.
 
+## Checking for memory leaks
+
+The examples are built with debug info, so you can run them under
+[Valgrind](https://valgrind.org/) to make sure nothing leaks:
+
+```sh
+cd examples/<example-name>
+./build.sh
+valgrind --leak-check=full --show-leak-kinds=all ./test
+```
+
+If everything is freed properly, Valgrind reports zero leaks and no errors:
+
+```
+==20700== HEAP SUMMARY:
+==20700==     in use at exit: 0 bytes in 0 blocks
+==20700==   total heap usage: 6 allocs, 6 frees, 9,314 bytes allocated
+==20700==
+==20700== All heap blocks were freed -- no leaks are possible
+==20700== ERROR SUMMARY: 0 errors from 0 contexts
+```
+
+Run the same command in each example directory (`code/`, `double_chars/`,
+`lorem/`), which each include a `build.sh` that compiles the example for you.
+
 ## License
 
 [MIT](LICENSE)
