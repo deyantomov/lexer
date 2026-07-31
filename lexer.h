@@ -155,8 +155,8 @@ static int lex_identifier(Lexer *lexer, Position position, const char *text,
     for (size_t keyword_idx = 0; keyword_idx < lexer->config.keyword_count; keyword_idx++) {
       const char *current = lexer->config.keywords[keyword_idx];
       size_t keyword_len = strlen(current);
-      bool isCurrent = memcmp(current, text + start, *consumed) == 0;
-      if (keyword_len == *consumed && isCurrent) {
+      if (keyword_len == *consumed &&
+          memcmp(current, text + start, keyword_len) == 0) {
         type = TOKEN_KEYWORD;
         break;
       }
@@ -199,9 +199,8 @@ static int lex_punct(Lexer *lexer, Position position, const char *text,
   for (size_t punct_idx = 0; punct_idx < lexer->config.punct_count; punct_idx++) {
     const char *current = lexer->config.puncts[punct_idx];
     size_t punct_len = strlen(current);
-    bool isCurrent = memcmp(current, text + start, punct_len) == 0;
-
-    if (start + punct_len <= text_len && punct_len > best_len && isCurrent) {
+    if (start + punct_len <= text_len && punct_len > best_len &&
+        memcmp(current, text + start, punct_len) == 0) {
       best_len = punct_len;
     }
   }
@@ -238,8 +237,9 @@ int lex(Lexer *lexer, const char *text, size_t text_len) {
     }
 
 
-    bool isCurrent = memcmp(text + i, lexer->config.comment, lexer->config.comment_len) == 0;
-    if (lexer->config.comment != NULL && i + lexer->config.comment_len <= text_len && isCurrent) {
+    if (lexer->config.comment != NULL &&
+        i + lexer->config.comment_len <= text_len &&
+        memcmp(text + i, lexer->config.comment, lexer->config.comment_len) == 0) {
       while (i < text_len && text[i] != '\n') {
         i++;
         col++;
