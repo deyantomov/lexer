@@ -1,4 +1,4 @@
-# Lexer
+### ⚠️ THIS IS FOR EDUCATIONAL PURPOSES ONLY. NOT SUITABLE FOR PRODUCTION.
 
 A small, single-file tokenizer for C. Give it some text and a few simple
 rules, and it splits the text into tokens (symbols, punctuation, comments).
